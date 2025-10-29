@@ -1,19 +1,15 @@
 import { NextResponse } from "next/server";
-import fs from "fs/promises";
-import path from "path";
+import { supabase } from "../../../lib/supabase";
 
-const CWD = process.cwd();
-const PROJECT_ROOT = path.basename(CWD) === "internet-mood" ? CWD : path.join(CWD, "internet-mood");
-const DATA_FILE = path.join(PROJECT_ROOT, "data", "moods.json");
-
+// Fallback: if Supabase fails we could still attempt to read local file, but primary source is Supabase.
 async function readData() {
-  try {
-    const raw = await fs.readFile(DATA_FILE, "utf8");
-    const arr = JSON.parse(raw || "[]");
-    return Array.isArray(arr) ? arr : [];
-  } catch {
+  // Query Supabase
+  const { data, error } = await supabase.from("moods").select("emoji,label,timestamp,country,region,latitude,longitude");
+  if (error) {
+    // On error return empty; client can decide to show zero state.
     return [];
   }
+  return data || [];
 }
 
 const countryToContinent: Record<string, string> = {
@@ -88,7 +84,7 @@ export async function GET(request: Request) {
     };
     if (debug) {
       payload.__debug = {
-        dataFile: DATA_FILE,
+        source: "supabase",
         exists: arr.length > 0,
         countriesPresent: Object.keys(byCountry),
         sampleFirst: arr.slice(0,3)

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import fs from "fs/promises";
 import path from "path";
+import { supabase } from "../../../lib/supabase";
 
 type MoodPayload = {
   emoji: string;
@@ -26,22 +27,42 @@ async function ensureFile() {
 }
 
 export async function POST(request: Request) {
-  await ensureFile();
+  // Parse payload
+  let body: MoodPayload;
   try {
-    const body = (await request.json()) as MoodPayload;
+    body = (await request.json()) as MoodPayload;
+  } catch (e) {
+    return NextResponse.json({ ok: false, error: "Invalid JSON payload" }, { status: 400 });
+  }
 
-  const raw = await fs.readFile(DATA_FILE, "utf8").catch(() => "[]");
-  const arr = JSON.parse(raw || "[]");
-    const sanitizedCountry = body.country ? body.country.toString().trim().toUpperCase() : null;
-    const entry = {
-      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
-      ...body,
-      country: sanitizedCountry,
-    };
-    arr.push(entry);
-    try { await fs.writeFile(DATA_FILE, JSON.stringify(arr, null, 2), "utf8"); } catch {}
-    return NextResponse.json({ ok: true, total: arr.length });
-  } catch (err) {
-    return NextResponse.json({ ok: false, error: String(err) }, { status: 500 });
+  const sanitizedCountry = body.country ? body.country.toString().trim().toUpperCase() : null;
+  const record = {
+    emoji: body.emoji,
+    label: body.label || null,
+    timestamp: body.timestamp || new Date().toISOString(),
+    country: sanitizedCountry,
+    region: body.region || null,
+    latitude: body.latitude ?? null,
+    longitude: body.longitude ?? null,
+  };
+
+  // Try Supabase first
+  try {
+    const { error } = await supabase.from("moods").insert(record);
+    if (error) throw error;
+    return NextResponse.json({ ok: true, source: "supabase" });
+  } catch (dbErr: any) {
+    // Fallback to local file so we don't lose data in dev
+    await ensureFile();
+    try {
+      const raw = await fs.readFile(DATA_FILE, "utf8").catch(() => "[]");
+      const arr = JSON.parse(raw || "[]");
+      const fileEntry = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), ...record };
+      arr.push(fileEntry);
+      await fs.writeFile(DATA_FILE, JSON.stringify(arr, null, 2), "utf8");
+      return NextResponse.json({ ok: true, source: "file", warning: "Supabase insert failed", error: String(dbErr) });
+    } catch (fileErr) {
+      return NextResponse.json({ ok: false, error: `DB+File failure: ${dbErr} / ${fileErr}` }, { status: 500 });
+    }
   }
 }
