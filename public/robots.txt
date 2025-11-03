@@ -1,0 +1,6 @@
+# Allow all search engines to index everything
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://internet-mood.vercel.app/sitemap.xml

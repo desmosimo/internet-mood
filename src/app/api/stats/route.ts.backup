@@ -9,6 +9,7 @@ type MoodRow = {
   region: string | null;
   latitude: number | null;
   longitude: number | null;
+  reason?: string | null;
 };
 
 function startOfDay(d = new Date()): Date {
@@ -26,55 +27,22 @@ function startOfNDaysAgo(n: number): Date {
 function iso(dt: Date): string { return dt.toISOString(); }
 
 async function readData(timeRange: string | null): Promise<MoodRow[]> {
+  // timeRange: 'day' | 'week' | 'month' | null (all)
   let fromISO: string | null = null;
   if (timeRange === 'day') {
     fromISO = iso(startOfDay());
   } else if (timeRange === 'week') {
-    fromISO = iso(startOfNDaysAgo(6));
+    fromISO = iso(startOfNDaysAgo(6)); // today + previous 6 days = 7 giorni
   } else if (timeRange === 'month') {
-    fromISO = iso(startOfNDaysAgo(29));
+    fromISO = iso(startOfNDaysAgo(29)); // 30 giorni
   }
 
-  let query = supabase.from('moods').select('emoji,label,timestamp,country,region,latitude,longitude');
+  let query = supabase.from('moods').select('emoji,label,timestamp,country,region,latitude,longitude,reason');
   if (fromISO) {
     query = query.gte('timestamp', fromISO);
   }
   const { data, error } = await query;
-  
-  console.log('[STATS DEBUG] timeRange:', timeRange, 'fromISO:', fromISO);
-  console.log('[STATS DEBUG] Supabase error:', error);
-  console.log('[STATS DEBUG] Data length:', data ? data.length : 0);
-  
-  // FALLBACK: Se Supabase fallisce, usa dati locali
-  if (error || !data || data.length === 0) {
-    console.log('[STATS] Supabase failed, using local fallback data/moods.json');
-    try {
-      const fs = await import('fs');
-      const path = await import('path');
-      const dataPath = path.join(process.cwd(), 'data', 'moods.json');
-      if (fs.existsSync(dataPath)) {
-        const raw = fs.readFileSync(dataPath, 'utf8');
-        const fileData = JSON.parse(raw || '[]');
-        console.log('[STATS] Loaded', fileData.length, 'records from local file');
-        
-        // Filter by time range if needed
-        if (fromISO) {
-          const fromTime = new Date(fromISO).getTime();
-          const filtered = fileData.filter((r: any) => {
-            if (!r.timestamp) return false;
-            return new Date(r.timestamp).getTime() >= fromTime;
-          });
-          return filtered as MoodRow[];
-        }
-        
-        return fileData as MoodRow[];
-      }
-    } catch (fsErr) {
-      console.error('[STATS] Fallback file read failed:', fsErr);
-    }
-    return [];
-  }
-  
+  if (error || !data) return [];
   return data as MoodRow[];
 }
 
@@ -105,11 +73,22 @@ function countryCodeToContinent(code?: string | null) {
   return countryToContinent[up] || "Other";
 }
 
+function normalizeReason(r?: string | null): string | null {
+  if (!r) return null;
+  // Normalize: lowercase, trim, collapse multiple spaces, remove special chars except letters/numbers/spaces
+  const cleaned = r.toLowerCase()
+    .replace(/[^a-z0-9àèéìòóùç\s]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // Only return if it has meaningful content (at least 2 characters)
+  return cleaned.length >= 2 ? cleaned : null;
+}
+
 export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const debug = url.searchParams.get("debug") === "1";
-    const timeRange = url.searchParams.get('timeRange');
+    const timeRange = url.searchParams.get('timeRange'); // 'day' | 'week' | 'month'
     const arr = await readData(timeRange);
 
     // Per trending global 24h vs precedenti 24h (indipendente da timeRange principale)
@@ -152,6 +131,8 @@ export async function GET(request: Request) {
     const byMood: Record<string, number> = {};
     const byMoodAndContinent: Record<string, Record<string, number>> = {};
     const byCountryMood: Record<string, Record<string, number>> = {};
+    const reasonTokens: Record<string, number> = {};
+    const reasonByCountry: Record<string, Record<string, number>> = {};
 
     for (const e of arr) {
       const rawCountry: string | null = e.country || null;
@@ -161,11 +142,39 @@ export async function GET(request: Request) {
 
       byContinent[cont] = (byContinent[cont] || 0) + 1;
       byCountry[country] = (byCountry[country] || 0) + 1;
-      if (!byCountryMood[country]) byCountryMood[country] = {};
+      if (!byCountryMood[country]) { byCountryMood[country] = {}; }
       byCountryMood[country][mood] = (byCountryMood[country][mood] || 0) + 1;
       byMood[mood] = (byMood[mood] || 0) + 1;
-      if (!byMoodAndContinent[cont]) byMoodAndContinent[cont] = {};
+      if (!byMoodAndContinent[cont]) { byMoodAndContinent[cont] = {}; }
       byMoodAndContinent[cont][mood] = (byMoodAndContinent[cont][mood] || 0) + 1;
+
+      // reason tokenization (globale)
+      if ((e as any).reason) {
+        const toks = tokenizeReason((e as any).reason);
+        for (const t of toks) {
+          reasonTokens[t] = (reasonTokens[t] || 0) + 1;
+        }
+        // reason per paese
+        if (!reasonByCountry[country]) { reasonByCountry[country] = {}; }
+        for (const t of toks) {
+          reasonByCountry[country][t] = (reasonByCountry[country][t] || 0) + 1;
+        }
+      }
+    }
+
+    // compute top tokens globali (limit 100)
+    const topReasonTokens = Object.entries(reasonTokens)
+      .sort((a,b) => b[1] - a[1])
+      .slice(0,100)
+      .map(([token,count]) => ({ token, count }));
+
+    // compute top tokens per paese (limit 50)
+    const reasonCloudByCountry: Record<string, Array<{token: string; count: number}>> = {};
+    for (const [country, tokens] of Object.entries(reasonByCountry)) {
+      reasonCloudByCountry[country] = Object.entries(tokens)
+        .sort((a,b) => b[1] - a[1])
+        .slice(0,50)
+        .map(([token,count]) => ({ token, count }));
     }
 
     const payload: any = {
@@ -175,6 +184,8 @@ export async function GET(request: Request) {
       byMood,
       byMoodAndContinent,
       byCountryMood,
+      reasonCloud: topReasonTokens,
+      reasonCloudByCountry,
       timeRange: timeRange || 'all',
       trending24h: topTrending,
     };
@@ -195,6 +206,8 @@ export async function GET(request: Request) {
       byMood: {},
       byMoodAndContinent: {},
       byCountryMood: {},
+      reasonCloud: [],
+      reasonCloudByCountry: {},
       error: String(err)
     }, { status: 500 });
   }

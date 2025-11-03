@@ -258,5 +258,16 @@
     "region": "Lombardy",
     "latitude": 45.9709057,
     "longitude": 12.648401
+  },
+  {
+    "id": "mhiuu3lq78z2af",
+    "emoji": "😄",
+    "label": "Happy",
+    "timestamp": "2025-11-03T08:04:53.524Z",
+    "country": "IT",
+    "region": "Lombardy",
+    "latitude": 45.9709022,
+    "longitude": 12.6484466,
+    "reason": "great weather"
   }
 ]

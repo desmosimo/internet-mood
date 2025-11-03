@@ -262,7 +262,7 @@ export default function WorldMap({ byCountry, byCountryMood, onSelectCountry }: 
   const [tooltipContent, setTooltipContent] = useState("");
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
 
-  // Precalcola mood dominante per ogni paese
+  // Precompute dominant mood for each country
   const countryDominantMood = useMemo(() => {
     const map: Record<string, string> = {};
     for (const c of Object.keys(byCountry)) {
@@ -341,9 +341,9 @@ export default function WorldMap({ byCountry, byCountryMood, onSelectCountry }: 
         </div>
       )}
       
-      {/* Legenda mood */}
-      <div className="absolute bottom-4 left-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg">
-        <h3 className="text-sm font-semibold mb-2">Mood dominante per paese</h3>
+      {/* Legenda mood - nascosta su mobile, visibile da sm (640px+) */}
+      <div className="hidden sm:block absolute bottom-4 left-4 bg-white dark:bg-gray-800 p-4 rounded-lg shadow-lg">
+        <h3 className="text-sm font-semibold mb-2">Dominant mood by country</h3>
         <div className="grid grid-cols-2 gap-2 text-xs">
           {Object.entries(MOOD_COLORS).map(([mood, color]) => (
             <div key={mood} className="flex items-center gap-2">
@@ -352,7 +352,7 @@ export default function WorldMap({ byCountry, byCountryMood, onSelectCountry }: 
             </div>
           ))}
         </div>
-        <div className="mt-2 text-[10px] text-gray-500">Grigio = Nessun dato</div>
+        <div className="mt-2 text-[10px] text-gray-500">Gray = No data</div>
       </div>
     </div>
   );
