@@ -16,10 +16,14 @@ type Stats = {
   byMood: Record<string, number>;
   byMoodAndContinent: Record<string, Record<string, number>>;
   byCountryMood: Record<string, Record<string, number>>;
-  reasonCloud: Array<{ token: string; count: number }>;
-  reasonCloudByCountry: Record<string, Array<{ token: string; count: number }>>;
   timeRange?: string;
   trending24h?: Array<{ mood: string; current: number; previous: number; delta: number; pct: number }>;
+};
+
+type ReasonsData = {
+  global: Array<{ phrase: string; count: number }>;
+  byCountry: Record<string, Array<{ phrase: string; count: number }>>;
+  total: number;
 };
 
 type ActiveTab = 'map' | 'countries' | 'reasons' | 'trending';
@@ -52,7 +56,9 @@ const ISO2_TO_NAME: Record<string, string> = {
 
 export default function StatsPage() {
   const [stats, setStats] = useState<Stats | null>(null);
+  const [reasons, setReasons] = useState<ReasonsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingReasons, setLoadingReasons] = useState(false);
   const [selectedCountry, setSelectedCountry] = useState<{ code: string; name: string } | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>('map');
   const [debugMode, setDebugMode] = useState(false);
@@ -74,10 +80,41 @@ export default function StatsPage() {
     }
   }
 
+  async function loadReasons() {
+    try {
+      setLoadingReasons(true);
+      const ts = Date.now();
+      const tr = timeRange === 'all' ? '' : `&timeRange=${timeRange}`;
+      const res = await fetch(`/api/stats/reasons?ts=${ts}${tr}`, { cache: 'no-store' });
+      const data = await res.json();
+      setReasons(data);
+    } catch {
+      setReasons(null);
+    } finally {
+      setLoadingReasons(false);
+    }
+  }
+
   useEffect(() => { 
     loadStats(); 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeRange]);
+
+  // Load reasons when switching to reasons tab
+  useEffect(() => {
+    if (activeTab === 'reasons' && !reasons) {
+      loadReasons();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  // Load reasons when country is selected (for modal)
+  useEffect(() => {
+    if (selectedCountry && !reasons) {
+      loadReasons();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCountry]);
 
   if (loading) {
     return (
@@ -173,6 +210,17 @@ export default function StatsPage() {
             <span className="hidden xs:inline sm:inline">Top Countries</span>
           </button>
           <button
+            onClick={() => setActiveTab('reasons')}
+            className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap transition-all flex-shrink-0 ${
+              activeTab === 'reasons'
+                ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white shadow-lg'
+                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+            }`}
+          >
+            <span className="text-sm sm:text-base">💭</span>
+            <span className="hidden xs:inline sm:inline">Reasons</span>
+          </button>
+          <button
             onClick={() => setActiveTab('trending')}
             className={`flex items-center gap-1 sm:gap-2 px-2.5 sm:px-4 py-2 sm:py-2.5 rounded-lg font-semibold text-xs sm:text-sm whitespace-nowrap transition-all flex-shrink-0 ${
               activeTab === 'trending'
@@ -254,6 +302,71 @@ export default function StatsPage() {
                 </button>
               );
             })}
+          </div>
+        )}
+
+        {activeTab === 'reasons' && (
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-3 sm:p-6">
+            <h3 className="text-base sm:text-lg font-semibold mb-3 sm:mb-4 flex items-center gap-2">
+              <span>💭</span>
+              <span className="text-sm sm:text-base">Why people feel this way</span>
+            </h3>
+            {loadingReasons ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+              </div>
+            ) : reasons && reasons.global.length > 0 ? (
+              <div className="space-y-4">
+                {/* Word Cloud Style Display */}
+                <div className="flex flex-wrap gap-2 sm:gap-3 justify-center items-center min-h-[250px] sm:min-h-[300px] bg-gray-50 dark:bg-gray-900/40 rounded-lg p-4 sm:p-6">
+                  {reasons.global.slice(0, 60).map((item, idx) => {
+                    const maxCount = reasons.global[0]?.count || 1;
+                    const minSize = 12;
+                    const maxSize = 42;
+                    const size = minSize + ((item.count / maxCount) * (maxSize - minSize));
+                    const opacity = 0.6 + (item.count / maxCount) * 0.4;
+                    const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
+                    const color = colors[idx % colors.length];
+                    return (
+                      <span
+                        key={item.phrase}
+                        className="inline-block px-2 sm:px-3 py-1 sm:py-1.5 rounded-lg font-bold transition-all hover:scale-110 sm:hover:scale-125 cursor-default"
+                        style={{
+                          fontSize: `${size}px`,
+                          color,
+                          opacity,
+                        }}
+                        title={`${item.count} mentions`}
+                      >
+                        {item.phrase}
+                      </span>
+                    );
+                  })}
+                </div>
+                
+                {/* Top phrases list */}
+                <div className="mt-6">
+                  <h4 className="text-sm font-semibold mb-3 text-gray-700 dark:text-gray-300">Top Reasons</h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {reasons.global.slice(0, 10).map((item, idx) => (
+                      <div key={item.phrase} className="flex items-center justify-between bg-gray-50 dark:bg-gray-900/40 px-3 py-2 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-purple-600 dark:text-purple-400">#{idx + 1}</span>
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">{item.phrase}</span>
+                        </div>
+                        <span className="text-xs text-gray-500">{item.count}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <p className="text-[10px] sm:text-xs text-gray-500 mt-4 text-center">
+                  Phrases are extracted from user-submitted reasons. Multi-word expressions like "good weather" are preserved.
+                </p>
+              </div>
+            ) : (
+              <p className="text-center text-gray-500 py-8 sm:py-12 text-sm">No reasons recorded yet</p>
+            )}
           </div>
         )}
 
@@ -365,6 +478,33 @@ export default function StatsPage() {
                       })}
                     </div>
                   </div>
+
+                  {/* Country-specific reasons */}
+                  {reasons && reasons.byCountry[selectedCountry.code] && reasons.byCountry[selectedCountry.code].length > 0 && (
+                    <div>
+                      <h3 className="font-semibold mb-3 text-gray-900 dark:text-white">💭 Local Reasons</h3>
+                      <div className="bg-gray-50 dark:bg-gray-900/40 rounded-lg p-4 flex flex-wrap gap-2 justify-center min-h-[120px]">
+                        {reasons.byCountry[selectedCountry.code].slice(0, 20).map((item, idx) => {
+                          const maxCount = reasons.byCountry[selectedCountry.code][0]?.count || 1;
+                          const minSize = 11;
+                          const maxSize = 24;
+                          const size = minSize + ((item.count / maxCount) * (maxSize - minSize));
+                          const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981'];
+                          const color = colors[idx % colors.length];
+                          return (
+                            <span
+                              key={item.phrase}
+                              className="inline-block px-2 py-1 rounded font-semibold"
+                              style={{ fontSize: `${size}px`, color }}
+                              title={`${item.count} mentions`}
+                            >
+                              {item.phrase}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
